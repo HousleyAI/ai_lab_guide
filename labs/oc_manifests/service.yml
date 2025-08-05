@@ -1,0 +1,16 @@
+### Service ###
+# It exposes an application running on a set of Pods as a network service
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: housley-bouncer-service                            # The name of the Service
+spec:
+  ports:
+    - name: http-8080                             # The port that the Service is listening on
+      port: 8080
+      protocol: TCP
+      targetPort: 8080                            # The port that the Service is forwarding to
+  selector:                                       # The selector for the pods that this Service is forwarding to
+    app: housley-bouncer
+
