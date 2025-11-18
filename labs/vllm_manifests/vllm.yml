@@ -1,0 +1,137 @@
+##### VLLM Manifest #####
+### PersistentVolumeClaim - used to store ai model ###
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vllm-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ocs-storagecluster-cephfs
+  resources:
+    requests:
+      storage: 50Gi
+
+
+### Deployment ###
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      affinity:                                                                     # Deploy on either node ocp5 or ocp6 - these are the servers with the L40 GPUs
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - ocp5
+                - ocp6
+
+      containers:
+      - name: inference-server                                                  # Part of vllm container name
+        image: vllm/vllm-openai:latest                                          # vllm image from DockerHub        
+
+
+        resources:                                                              # Request GPU resource
+          limits:
+            nvidia.com/gpu: "1"
+
+        ### This Command does nothing, just keeps the pod alive for testing ###
+        command: ["tail", "-f", "/dev/null"]
+
+
+        # vllm serve Qwen/Qwen3-0.6B --trust-remote-code --enable-chunked-prefill --max_num_batched_tokens 1024 --max-model-len 2048 --gpu-memory-utilization 0.05
+
+
+        ### This command runs a vllm server ###
+        # command: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+        # args: [
+        #   "--model", "Qwen/Qwen3-0.6B",
+        #   "--tensor-parallel-size", "1",
+        #   "--host", "0.0.0.0",
+        #   "--port", "8000",
+        #   "--trust-remote-code",
+        #   "--enable-chunked-prefill",
+        #   "--max_num_batched_tokens", "1024",
+        #   "--max-model-len", "2048",
+        #   "--gpu-memory-utilization", "0.05"
+        #   ]
+
+
+        
+
+        ports:
+        - containerPort: 8000
+
+        env:
+        - name: HUGGING_FACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token-secret
+              key: token
+
+
+        volumeMounts:
+        - name: vllm-storage        # Mapping of the ai model storage pvc
+          mountPath: /.cache
+        - name: config-volume
+          mountPath: /.config
+        - name: triton
+          mountPath: /.triton
+
+      volumes:
+      - name: vllm-storage
+        persistentVolumeClaim:
+          claimName: vllm-pvc 
+      - name: config-volume
+        emptyDir: {}
+      - name: triton
+        emptyDir: {}
+
+
+
+### Service ###
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-service
+spec:
+  selector:
+    app: vllm
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
+
+
+
+### Route ###
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: vllm-route
+spec:
+  to:
+    kind: Service
+    name: vllm-service
+  port:
+    targetPort: 8000
+  tls:
+    termination: edge
+  wildcardPolicy: None
